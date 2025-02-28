@@ -197,7 +197,7 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load the raw client config string from st.secrets.
+    # Load raw client config from st.secrets.
     try:
         raw_config = st.secrets["google"]["client_secrets"]
         st.write("DEBUG: Raw client_config from secrets:", raw_config)
@@ -223,21 +223,27 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
-    # Remove extra keys that PyDrive2 might not expect (e.g., "project_id").
+    # Remove extra keys that PyDrive2 might not expect.
     if "project_id" in client_config:
         st.write("DEBUG: Removing extra key 'project_id' from client config.")
         del client_config["project_id"]
+    
+    # WORKAROUND: Replace "redirect_uris" with a single "redirect_uri".
+    if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
+        st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
+        client_config["redirect_uri"] = client_config["redirect_uris"][0]
+        del client_config["redirect_uris"]
+    
+    # Set the OAuth scope explicitly.
+    gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
+    st.write("DEBUG: Set oauth_scope to:", gauth.settings["oauth_scope"])
     
     # Set the client configuration for PyDrive2.
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
-    # **NEW:** Set the OAuth scope explicitly.
-    gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
-    st.write("DEBUG: Set oauth_scope to:", gauth.settings["oauth_scope"])
-    
     # Debug: Check for required keys.
-    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
+    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uri"]
     missing = [k for k in required_keys if k not in gauth.settings["client_config"]]
     if missing:
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
