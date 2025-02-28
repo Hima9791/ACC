@@ -215,7 +215,7 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Fixed JSON string:", fixed)
         client_config_full = json.loads(fixed)
 
-    # Check if we have a "web" key. If so, use that.
+    # Check if the JSON contains a "web" key.
     if "web" in client_config_full:
         client_config = client_config_full["web"]
         st.write("DEBUG: Using client_config['web']:", json.dumps(client_config, indent=2))
@@ -247,8 +247,8 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Use st.query_params() instead of st.experimental_get_query_params()
-    params = st.query_params()
+    # Use st.query_params (the new API) to obtain the code.
+    params = st.query_params
     if "code" in params:
         code = params["code"][0]
         st.write("DEBUG: Found authorization code in query parameters:", code)
@@ -260,11 +260,10 @@ def save_mapping_to_drive(mapping_df):
             st.error(f"DEBUG: Authentication failed: {auth_error}")
             st.stop()
     else:
-        # Generate the auth URL and instruct the user.
         auth_url = gauth.GetAuthUrl()
         st.write("### Google Drive Authorization Required")
         st.markdown(f"[Authorize Here]({auth_url})")
-        st.write("After approval, please reload the app with the code in the URL query parameters.")
+        st.write("After approval, reload the app with the code in the URL query parameters.")
         st.stop()
     
     drive = GoogleDrive(gauth)
