@@ -29,9 +29,9 @@ MULTIPLIER_MAPPING = {
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
-    # Use your Google Sheets file ID extracted from your URL
+    # Use your Google Sheets file ID from your link
     MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
-    # Use the Google Sheets export endpoint to download as an Excel file
+    # Export the Google Sheet as an Excel file
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
     output_path = "mapping.xlsx"
     if not os.path.exists(output_path):
@@ -41,7 +41,7 @@ def download_mapping_file():
 
 def read_mapping_file(mapping_file_path):
     if not os.path.exists(mapping_file_path):
-        raise FileNotFoundError(f"Error: '{mapping_file_path}' not found in the working directory.")
+        raise FileNotFoundError(f"Error: '{mapping_file_path}' not found.")
     try:
         mapping_df = pd.read_excel(mapping_file_path)
     except Exception as e:
@@ -50,6 +50,7 @@ def read_mapping_file(mapping_file_path):
     if not required_columns.issubset(mapping_df.columns):
         raise ValueError(f"'{mapping_file_path}' must contain the columns: {required_columns}")
     base_units = {str(unit).strip() for unit in mapping_df['Base Unit Symbol'].dropna().unique()}
+    # Only consider rows with a valid multiplier (non-null)
     multipliers_df = mapping_df[mapping_df['Multiplier Symbol'].notna()]
     defined_multipliers = set(multipliers_df['Multiplier Symbol'])
     undefined_multipliers = defined_multipliers - set(MULTIPLIER_MAPPING.keys())
@@ -186,7 +187,7 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
 # ------------------ Streamlit App UI ------------------ #
 st.title("Unit Processing App")
 
-# Let user choose between two modes
+# Let user choose between two operations
 operation = st.selectbox("Select Operation", options=["Get Pattern", "Add Unit"])
 
 # Download and read the mapping file from Google Sheets
@@ -201,7 +202,6 @@ if operation == "Get Pattern":
     st.header("Get Pattern")
     st.write("This mode processes an input Excel file using the mapping file.")
     st.write("The mapping file is automatically loaded from Google Drive.")
-
     # Upload Input Excel File
     input_file = st.file_uploader("Upload Input Excel File", type=["xlsx"])
     if input_file:
@@ -229,30 +229,28 @@ if operation == "Get Pattern":
 
 elif operation == "Add Unit":
     st.header("Add Unit")
-    st.write("This mode lets you add a new unit to the mapping file.")
-    st.write("Please ensure your input matches the mapping file headers: 'Base Unit Symbol' and 'Multiplier Symbol'.")
+    st.write("This mode lets you add a new unit to the mapping file. Only the unit symbol is required.")
     
     # Display current mapping
     st.subheader("Current Mapping File")
     st.dataframe(mapping_df)
     
-    # Form to add a new unit
+    # Form to add a new unit (multiplier is not required)
     with st.form(key="add_unit_form"):
-        new_base_unit = st.text_input("Enter new Base Unit Symbol")
-        new_multiplier = st.text_input("Enter new Multiplier Symbol")
+        new_unit = st.text_input("Enter new Base Unit Symbol")
         submit_new = st.form_submit_button("Add New Unit")
     
     if submit_new:
-        if new_base_unit and new_multiplier:
-            # Append the new row
-            new_row = {"Base Unit Symbol": new_base_unit.strip(), "Multiplier Symbol": new_multiplier.strip()}
-            mapping_df = mapping_df.append(new_row, ignore_index=True)
+        if new_unit:
+            # Append new row using pd.concat instead of .append
+            new_row = {"Base Unit Symbol": new_unit.strip(), "Multiplier Symbol": None}
+            mapping_df = pd.concat([mapping_df, pd.DataFrame([new_row])], ignore_index=True)
             st.success("New unit added!")
             st.dataframe(mapping_df)
         else:
-            st.error("Both fields are required.")
+            st.error("The unit field is required.")
     
-    # Provide download button for the updated mapping file
+    # Provide a download button for the updated mapping file
     if st.button("Download Updated Mapping File"):
         towrite = BytesIO()
         mapping_df.to_excel(towrite, index=False, engine='openpyxl')
