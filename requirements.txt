@@ -1,0 +1,6 @@
+streamlit
+openpyxl
+xlsxwriter
+pandas
+tqdm
+gdown
