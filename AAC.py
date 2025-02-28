@@ -205,7 +205,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Try to parse the raw JSON.
+    # Parse the raw JSON.
     try:
         client_config_full = json.loads(raw_config)
         st.write("DEBUG: Successfully parsed raw JSON.")
@@ -215,7 +215,7 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Fixed JSON string:", fixed)
         client_config_full = json.loads(fixed)
 
-    # Check if we have a 'web' key and use that configuration.
+    # Check if the JSON contains a "web" key. If so, use that.
     if "web" in client_config_full:
         client_config = client_config_full["web"]
         st.write("DEBUG: Using client_config['web']:", json.dumps(client_config, indent=2))
@@ -226,16 +226,12 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
-    # Remove extra keys that PyDrive2 might not expect.
-    if "project_id" in client_config:
-        st.write("DEBUG: Removing extra key 'project_id' from client config.")
-        del client_config["project_id"]
-    
-    # WORKAROUND: Replace "redirect_uris" with a single "redirect_uri".
+    # (Do not remove any keys as per your instruction.)
+    # WORKAROUND: If "redirect_uris" exists, copy its first element to "redirect_uri" (do not delete the original).
     if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
         st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
-        client_config["redirect_uri"] = client_config["redirect_uris"][0]  # Ensure this is your valid Streamlit app URL!
-        del client_config["redirect_uris"]
+        client_config["redirect_uri"] = client_config["redirect_uris"][0]
+        # Note: We are not deleting "redirect_uris" per your request.
     
     # Set the OAuth scope explicitly.
     gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
@@ -252,20 +248,26 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
-    if os.path.exists("mycreds.txt"):
-        gauth.LoadCredentialsFile("mycreds.txt")
-        st.write("DEBUG: Loaded saved credentials from mycreds.txt")
-    if gauth.credentials is None:
-        st.write("DEBUG: No credentials found; performing LocalWebserverAuth")
-        gauth.LocalWebserverAuth()
-    elif gauth.access_token_expired:
-        st.write("DEBUG: Credentials expired; refreshing")
-        gauth.Refresh()
+    # Instead of calling LocalWebserverAuth, we now use the query parameter flow.
+    params = st.experimental_get_query_params()
+    if "code" in params:
+        code = params["code"][0]
+        st.write("DEBUG: Found authorization code in query parameters:", code)
+        try:
+            gauth.Auth(code)
+            gauth.SaveCredentialsFile("mycreds.txt")
+            st.write("DEBUG: Authentication successful. Credentials saved.")
+        except Exception as auth_error:
+            st.error(f"DEBUG: Authentication failed: {auth_error}")
+            st.stop()
     else:
-        st.write("DEBUG: Credentials valid; authorizing")
-        gauth.Authorize()
-    gauth.SaveCredentialsFile("mycreds.txt")
+        # If no code is provided, generate the auth URL and instruct the user.
+        auth_url = gauth.GetAuthUrl()
+        st.write("### Google Drive Authorization Required")
+        st.write("Please click the following link to authorize access to your Google Drive:")
+        st.markdown(f"[Authorize Here]({auth_url})")
+        st.write("After approval, you will be redirected back with a 'code' parameter. Then reload the app.")
+        st.stop()
     
     drive = GoogleDrive(gauth)
     st.write("DEBUG: Uploading temporary file:", temp_file)
