@@ -197,7 +197,7 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load the raw client config string from st.secrets.
+    # Load raw client config from st.secrets.
     try:
         raw_config = st.secrets["google"]["client_secrets"]
         st.write("DEBUG: Raw client_config from secrets:", raw_config)
@@ -215,8 +215,11 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Fixed JSON string:", fixed)
         client_config_full = json.loads(fixed)
 
-    # Use the "installed" configuration if present.
-    if "installed" in client_config_full:
+    # Check if we have a 'web' key and use that configuration.
+    if "web" in client_config_full:
+        client_config = client_config_full["web"]
+        st.write("DEBUG: Using client_config['web']:", json.dumps(client_config, indent=2))
+    elif "installed" in client_config_full:
         client_config = client_config_full["installed"]
         st.write("DEBUG: Using client_config['installed']:", json.dumps(client_config, indent=2))
     else:
@@ -228,10 +231,10 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Removing extra key 'project_id' from client config.")
         del client_config["project_id"]
     
-    # Replace "redirect_uris" with a single "redirect_uri".
+    # WORKAROUND: Replace "redirect_uris" with a single "redirect_uri".
     if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
         st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
-        client_config["redirect_uri"] = client_config["redirect_uris"][0]  # Use your Streamlit app URL here!
+        client_config["redirect_uri"] = client_config["redirect_uris"][0]  # Ensure this is your valid Streamlit app URL!
         del client_config["redirect_uris"]
     
     # Set the OAuth scope explicitly.
@@ -249,7 +252,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
