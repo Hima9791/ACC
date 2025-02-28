@@ -4,3 +4,4 @@ xlsxwriter
 pandas
 tqdm
 gdown
+PyDrive2
