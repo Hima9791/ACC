@@ -35,33 +35,17 @@ MULTIPLIER_MAPPING = {
 # ------------------ Helper Functions ------------------ #
 def fix_json_string(s):
     """
-    Splits the raw JSON string into lines and, for each line that appears to contain a key-value pair,
-    adds a trailing comma if the next non-empty line is not a closing brace or bracket.
-    This is a workaround for missing commas in the JSON string.
+    Repeatedly insert a comma between a value and the next key if missing.
+    The regex looks for a pattern like:
+        ":[^,}]+"
+    immediately followed by a quote that starts the next key, and inserts a comma.
     """
-    lines = s.splitlines()
-    fixed_lines = []
-    for i, line in enumerate(lines):
-        stripped = line.rstrip()
-        # If the line is not a starting brace, not ending with a comma, and not a closing brace/bracket...
-        if stripped and not (stripped.endswith(",") or stripped.endswith("{") or stripped.endswith("[") or stripped.startswith("}") or stripped.startswith("]")):
-            # Look ahead for the next non-empty line.
-            j = i + 1
-            next_line = ""
-            while j < len(lines):
-                if lines[j].strip():
-                    next_line = lines[j].strip()
-                    break
-                j += 1
-            # If the next line is not a closing brace or bracket, add a comma.
-            if next_line and not (next_line.startswith("}") or next_line.startswith("]")):
-                fixed_lines.append(stripped + ",")
-            else:
-                fixed_lines.append(stripped)
-        else:
-            fixed_lines.append(stripped)
-    fixed_str = "\n".join(fixed_lines)
-    return fixed_str
+    pattern = re.compile(r'(":[^,}]+)(\s*")')
+    prev = None
+    while prev != s:
+        prev = s
+        s = pattern.sub(r'\1,\2', s)
+    return s
 
 def download_mapping_file():
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
@@ -231,7 +215,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Fix the JSON string by inserting missing commas.
+    # Fix the JSON string.
     fixed_config_str = fix_json_string(raw_config)
     st.write("DEBUG: Fixed client_config string:", fixed_config_str)
     
@@ -244,10 +228,10 @@ def save_mapping_to_drive(mapping_df):
     # Extract the "installed" configuration if present.
     if "installed" in client_config_full:
         client_config = client_config_full["installed"]
-        st.write("DEBUG: Using client_config['installed']:", client_config)
+        st.write("DEBUG: Using client_config['installed']:", json.dumps(client_config, indent=2))
     else:
         client_config = client_config_full
-        st.write("DEBUG: Using full client_config:", client_config)
+        st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
     # Set the client configuration for PyDrive2.
     gauth.settings["client_config_backend"] = "settings"
@@ -260,7 +244,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing_keys))
         raise Exception("Insufficient client config in settings: missing " + ", ".join(missing_keys))
     
-    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
