@@ -35,10 +35,8 @@ MULTIPLIER_MAPPING = {
 # ------------------ Helper Functions ------------------ #
 def fix_json_string(s):
     """
-    Repeatedly insert a comma between a value and the next key if missing.
-    The regex looks for a pattern like:
-        ":[^,}]+"
-    immediately followed by a quote that starts the next key, and inserts a comma.
+    This helper applies a regex fix to insert commas between adjacent key-value pairs.
+    (Use this only if raw JSON fails to parse.)
     """
     pattern = re.compile(r'(":[^,}]+)(\s*")')
     prev = None
@@ -113,49 +111,43 @@ def split_outside_parens(text, delimiters):
 
 def process_unit_token_no_paren(token, base_units, multipliers_dict):
     if token.startswith('$'):
-        after_dollar_preserved = token[1:]
-        after_dollar_stripped = after_dollar_preserved.strip()
-        if after_dollar_stripped == "":
+        after_dollar = token[1:]
+        stripped = after_dollar.strip()
+        if stripped == "":
             return "$"
-        if after_dollar_stripped in base_units:
-            return "$" + after_dollar_preserved
-        sorted_prefixes = sorted(multipliers_dict.keys(), key=len, reverse=True)
-        for prefix in sorted_prefixes:
-            if after_dollar_stripped.startswith(prefix):
-                possible_base_stripped = after_dollar_stripped[len(prefix):]
-                if possible_base_stripped in base_units:
-                    idx = after_dollar_preserved.find(prefix)
+        if stripped in base_units:
+            return "$" + after_dollar
+        for prefix in sorted(multipliers_dict.keys(), key=len, reverse=True):
+            if stripped.startswith(prefix):
+                possible = stripped[len(prefix):]
+                if possible in base_units:
+                    idx = after_dollar.find(prefix)
                     if idx != -1:
-                        if idx == 1 and after_dollar_preserved[0] == " ":
-                            base_unit_preserved = after_dollar_preserved[:0] + after_dollar_preserved[idx + len(prefix):]
+                        if idx == 1 and after_dollar[0] == " ":
+                            preserved = after_dollar[:0] + after_dollar[idx + len(prefix):]
                         else:
-                            base_unit_preserved = after_dollar_preserved[:idx] + after_dollar_preserved[idx + len(prefix):]
-                    else:
-                        base_unit_preserved = possible_base_stripped
-                    return "$" + base_unit_preserved
-        return f"Error: Undefined unit '{after_dollar_stripped}' (no recognized prefix)"
+                            preserved = after_dollar[:idx] + after_dollar[idx + len(prefix):]
+                        return "$" + preserved
+        return f"Error: Undefined unit '{stripped}' (no recognized prefix)"
     else:
-        stripped_token = token.strip()
-        if stripped_token in base_units:
-            return "$" + stripped_token
-        sorted_prefixes = sorted(multipliers_dict.keys(), key=len, reverse=True)
-        for prefix in sorted_prefixes:
-            if stripped_token.startswith(prefix):
-                possible_base_stripped = stripped_token[len(prefix):]
-                if possible_base_stripped in base_units:
+        stripped = token.strip()
+        if stripped in base_units:
+            return "$" + stripped
+        for prefix in sorted(multipliers_dict.keys(), key=len, reverse=True):
+            if stripped.startswith(prefix):
+                possible = stripped[len(prefix):]
+                if possible in base_units:
                     idx = token.find(prefix)
                     if idx != -1:
                         if idx > 0 and token[idx-1] == " ":
                             if idx == 1:
-                                base_unit_preserved = token[:0] + token[idx + len(prefix):]
+                                preserved = token[:0] + token[idx + len(prefix):]
                             else:
-                                base_unit_preserved = token[:idx] + token[idx + len(prefix):]
+                                preserved = token[:idx] + token[idx + len(prefix):]
                         else:
-                            base_unit_preserved = token[:idx] + token[idx + len(prefix):]
-                    else:
-                        base_unit_preserved = possible_base_stripped
-                    return "$" + base_unit_preserved
-        return f"Error: Undefined unit '{stripped_token}' (no recognized prefix)"
+                            preserved = token[:idx] + token[idx + len(prefix):]
+                        return "$" + preserved
+        return f"Error: Undefined unit '{stripped}' (no recognized prefix)"
 
 def process_unit_token(token, base_units, multipliers_dict):
     pattern = re.compile(
@@ -168,36 +160,34 @@ def process_unit_token(token, base_units, multipliers_dict):
     m = pattern.match(token)
     if not m:
         return token
-    lead     = m.group('lead')
-    numeric  = m.group('numeric')
-    space1   = m.group('space1')
+    lead = m.group('lead')
+    numeric = m.group('numeric')
+    space1 = m.group('space1')
     unit_part = m.group('unit')
-    space2   = m.group('space2')
-    paren    = m.group('paren') if m.group('paren') else ""
-    trail    = m.group('trail')
+    space2 = m.group('space2')
+    paren = m.group('paren') if m.group('paren') else ""
+    trail = m.group('trail')
     core = unit_part.strip()
-    left_ws  = re.match(r'^\s*', unit_part).group(0) or ""
+    left_ws = re.match(r'^\s*', unit_part).group(0) or ""
     right_ws = re.search(r'\s*$', unit_part).group(0) or ""
-    processed_core = process_unit_token_no_paren(core, base_units, multipliers_dict)
-    new_unit_part = left_ws + processed_core + right_ws
+    processed = process_unit_token_no_paren(core, base_units, multipliers_dict)
+    new_unit = left_ws + processed + right_ws
     if "ohm" in core.lower():
-        if new_unit_part.startswith("$") and not new_unit_part.startswith("$ "):
-            new_unit_part = "$ " + new_unit_part[1:].lstrip()
+        if new_unit.startswith("$") and not new_unit.startswith("$ "):
+            new_unit = "$ " + new_unit[1:].lstrip()
         if numeric and not space1:
             space1 = " "
-    return f"{lead}{numeric}{space1}{new_unit_part}{space2}{paren}{trail}"
+    return f"{lead}{numeric}{space1}{new_unit}{space2}{paren}{trail}"
 
 def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     tokens = split_outside_parens(normalized_unit, delimiters=["to", ",", "@"])
-    resolved_parts = []
+    resolved = []
     for part in tokens:
         if part in ["to", ",", "@"]:
-            resolved_parts.append(part)
-        else:
-            if part == "":
-                continue
-            resolved_parts.append(process_unit_token(part, base_units, multipliers_dict))
-    return "".join(resolved_parts)
+            resolved.append(part)
+        elif part:
+            resolved.append(process_unit_token(part, base_units, multipliers_dict))
+    return "".join(resolved)
 
 def save_mapping_to_drive(mapping_df):
     # Save updated mapping to a temporary file.
@@ -207,7 +197,7 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load the raw client config string from st.secrets.
+    # Load raw client config from st.secrets.
     try:
         raw_config = st.secrets["google"]["client_secrets"]
         st.write("DEBUG: Raw client_config from secrets:", raw_config)
@@ -215,17 +205,17 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Fix the JSON string.
-    fixed_config_str = fix_json_string(raw_config)
-    st.write("DEBUG: Fixed client_config string:", fixed_config_str)
-    
+    # First, try to parse the raw JSON.
     try:
-        client_config_full = json.loads(fixed_config_str)
+        client_config_full = json.loads(raw_config)
+        st.write("DEBUG: Successfully parsed raw JSON.")
     except Exception as e:
-        st.error("DEBUG: Failed to parse fixed JSON string: " + str(e))
-        raise
+        st.write("DEBUG: Raw JSON failed to parse, attempting fix. Error:", e)
+        fixed = fix_json_string(raw_config)
+        st.write("DEBUG: Fixed JSON string:", fixed)
+        client_config_full = json.loads(fixed)
 
-    # Extract the "installed" configuration if present.
+    # Use the "installed" section if present.
     if "installed" in client_config_full:
         client_config = client_config_full["installed"]
         st.write("DEBUG: Using client_config['installed']:", json.dumps(client_config, indent=2))
@@ -233,18 +223,18 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
-    # Set the client configuration for PyDrive2.
+    # Set configuration for PyDrive2.
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
-    # Debug: Check for required keys.
+    # Check for required keys.
     required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
-    missing_keys = [key for key in required_keys if key not in gauth.settings["client_config"]]
-    if missing_keys:
-        st.error("DEBUG: Missing keys in client config: " + ", ".join(missing_keys))
-        raise Exception("Insufficient client config in settings: missing " + ", ".join(missing_keys))
+    missing = [k for k in required_keys if k not in gauth.settings["client_config"]]
+    if missing:
+        st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
+        raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise, perform authentication.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
