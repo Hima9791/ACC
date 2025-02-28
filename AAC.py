@@ -33,6 +33,7 @@ MULTIPLIER_MAPPING = {
     'z': 1e-21,  # zepto
     'y': 1e-24   # yocto
 }
+st.write(st.secrets)
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
