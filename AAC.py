@@ -35,15 +35,33 @@ MULTIPLIER_MAPPING = {
 # ------------------ Helper Functions ------------------ #
 def fix_json_string(s):
     """
-    Insert missing commas between adjacent quoted strings.
-    This is a workaround for malformed JSON from the server.
-    For example, it converts:
-      "client_id":"ABC""project_id":"XYZ"
-    to:
-      "client_id":"ABC","project_id":"XYZ"
+    Splits the raw JSON string into lines and, for each line that appears to contain a key-value pair,
+    adds a trailing comma if the next non-empty line is not a closing brace or bracket.
+    This is a workaround for missing commas in the JSON string.
     """
-    fixed = re.sub(r'(")\s*(")', r'\1,\2', s)
-    return fixed
+    lines = s.splitlines()
+    fixed_lines = []
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        # If the line is not a starting brace, not ending with a comma, and not a closing brace/bracket...
+        if stripped and not (stripped.endswith(",") or stripped.endswith("{") or stripped.endswith("[") or stripped.startswith("}") or stripped.startswith("]")):
+            # Look ahead for the next non-empty line.
+            j = i + 1
+            next_line = ""
+            while j < len(lines):
+                if lines[j].strip():
+                    next_line = lines[j].strip()
+                    break
+                j += 1
+            # If the next line is not a closing brace or bracket, add a comma.
+            if next_line and not (next_line.startswith("}") or next_line.startswith("]")):
+                fixed_lines.append(stripped + ",")
+            else:
+                fixed_lines.append(stripped)
+        else:
+            fixed_lines.append(stripped)
+    fixed_str = "\n".join(fixed_lines)
+    return fixed_str
 
 def download_mapping_file():
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
@@ -198,7 +216,7 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved_parts)
 
 def save_mapping_to_drive(mapping_df):
-    # Save the updated mapping DataFrame to a temporary file.
+    # Save updated mapping to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
@@ -231,7 +249,7 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", client_config)
     
-    # Set the PyDrive2 client configuration.
+    # Set the client configuration for PyDrive2.
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
@@ -242,7 +260,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing_keys))
         raise Exception("Insufficient client config in settings: missing " + ", ".join(missing_keys))
     
-    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
