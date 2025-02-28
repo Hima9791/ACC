@@ -205,7 +205,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Parse the raw JSON.
+    # Try to parse the raw JSON.
     try:
         client_config_full = json.loads(raw_config)
         st.write("DEBUG: Successfully parsed raw JSON.")
@@ -215,7 +215,7 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Fixed JSON string:", fixed)
         client_config_full = json.loads(fixed)
 
-    # Check if the JSON contains a "web" key. If so, use that.
+    # Check if we have a "web" key. If so, use that.
     if "web" in client_config_full:
         client_config = client_config_full["web"]
         st.write("DEBUG: Using client_config['web']:", json.dumps(client_config, indent=2))
@@ -226,12 +226,11 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
-    # (Do not remove any keys as per your instruction.)
-    # WORKAROUND: If "redirect_uris" exists, copy its first element to "redirect_uri" (do not delete the original).
+    # Do not remove any keys.
+    # WORKAROUND: If "redirect_uris" exists, add a new key "redirect_uri" (without deleting "redirect_uris").
     if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
         st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
         client_config["redirect_uri"] = client_config["redirect_uris"][0]
-        # Note: We are not deleting "redirect_uris" per your request.
     
     # Set the OAuth scope explicitly.
     gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
@@ -248,8 +247,8 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Instead of calling LocalWebserverAuth, we now use the query parameter flow.
-    params = st.experimental_get_query_params()
+    # Use st.query_params() instead of st.experimental_get_query_params()
+    params = st.query_params()
     if "code" in params:
         code = params["code"][0]
         st.write("DEBUG: Found authorization code in query parameters:", code)
@@ -261,12 +260,11 @@ def save_mapping_to_drive(mapping_df):
             st.error(f"DEBUG: Authentication failed: {auth_error}")
             st.stop()
     else:
-        # If no code is provided, generate the auth URL and instruct the user.
+        # Generate the auth URL and instruct the user.
         auth_url = gauth.GetAuthUrl()
         st.write("### Google Drive Authorization Required")
-        st.write("Please click the following link to authorize access to your Google Drive:")
         st.markdown(f"[Authorize Here]({auth_url})")
-        st.write("After approval, you will be redirected back with a 'code' parameter. Then reload the app.")
+        st.write("After approval, please reload the app with the code in the URL query parameters.")
         st.stop()
     
     drive = GoogleDrive(gauth)
