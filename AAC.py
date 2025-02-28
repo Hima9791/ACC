@@ -33,6 +33,18 @@ MULTIPLIER_MAPPING = {
 }
 
 # ------------------ Helper Functions ------------------ #
+def fix_json_string(s):
+    """
+    Insert missing commas between adjacent quoted strings.
+    This is a workaround for malformed JSON from the server.
+    For example, it converts:
+      "client_id":"ABC""project_id":"XYZ"
+    to:
+      "client_id":"ABC","project_id":"XYZ"
+    """
+    fixed = re.sub(r'(")\s*(")', r'\1,\2', s)
+    return fixed
+
 def download_mapping_file():
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
     output_path = "mapping.xlsx"
@@ -186,22 +198,32 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved_parts)
 
 def save_mapping_to_drive(mapping_df):
-    # Save updated mapping to a temporary file.
+    # Save the updated mapping DataFrame to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load client configuration from st.secrets.
+    # Load the raw client config string from st.secrets.
     try:
-        client_config_full = json.loads(st.secrets["google"]["client_secrets"])
-        st.write("DEBUG: Full client_config from secrets:", client_config_full)
+        raw_config = st.secrets["google"]["client_secrets"]
+        st.write("DEBUG: Raw client_config from secrets:", raw_config)
     except Exception as e:
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Check if the "installed" key exists; if so, use it.
+    # Fix the JSON string by inserting missing commas.
+    fixed_config_str = fix_json_string(raw_config)
+    st.write("DEBUG: Fixed client_config string:", fixed_config_str)
+    
+    try:
+        client_config_full = json.loads(fixed_config_str)
+    except Exception as e:
+        st.error("DEBUG: Failed to parse fixed JSON string: " + str(e))
+        raise
+
+    # Extract the "installed" configuration if present.
     if "installed" in client_config_full:
         client_config = client_config_full["installed"]
         st.write("DEBUG: Using client_config['installed']:", client_config)
@@ -209,24 +231,24 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", client_config)
     
-    # Set client configuration settings for PyDrive2.
+    # Set the PyDrive2 client configuration.
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
     # Debug: Check for required keys.
-    required_keys = ["client_id", "client_secret", "project_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
+    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
     missing_keys = [key for key in required_keys if key not in gauth.settings["client_config"]]
     if missing_keys:
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing_keys))
         raise Exception("Insufficient client config in settings: missing " + ", ".join(missing_keys))
     
-    # Load saved credentials if available; otherwise perform authentication.
+    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
     if gauth.credentials is None:
         st.write("DEBUG: No credentials found; performing LocalWebserverAuth")
-        gauth.LocalWebserverAuth()  # Opens a browser window for authentication.
+        gauth.LocalWebserverAuth()
     elif gauth.access_token_expired:
         st.write("DEBUG: Credentials expired; refreshing")
         gauth.Refresh()
