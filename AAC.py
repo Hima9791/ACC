@@ -2,15 +2,12 @@ import streamlit as st
 import pandas as pd
 import re
 import os
-import gdown
 import json
+import base64
+import requests
 from io import BytesIO
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
 
-# ------------------ Global Constants ------------------ #
-MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
-
+# ------------------ Global dictionary for recognized multipliers ------------------ #
 MULTIPLIER_MAPPING = {
     'k': 1e3,
     'M': 1e6,
@@ -32,44 +29,86 @@ MULTIPLIER_MAPPING = {
     'y': 1e-24
 }
 
-# ------------------ Helper Functions ------------------ #
-def fix_json_string(s):
-    """
-    Repeatedly insert a comma between adjacent key-value pairs if missing.
-    (Workaround only if raw JSON fails to parse.)
-    """
-    pattern = re.compile(r'(":[^,}]+)(\s*")')
-    prev = None
-    while prev != s:
-        prev = s
-        s = pattern.sub(r'\1,\2', s)
-    return s
+# ------------------ GitHub Helper Functions ------------------ #
 
-def download_mapping_file():
-    mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
-    output_path = "mapping.xlsx"
-    if not os.path.exists(output_path):
-        st.info("Downloading mapping file from Google Drive...")
-        gdown.download(mapping_url, output_path, quiet=False)
-    return output_path
+def download_mapping_file_from_github() -> str:
+    """
+    Downloads 'mapping.xlsx' from a GitHub repo specified in secrets,
+    saves it locally, and returns the local file path.
+    """
+    github_token = st.secrets["github"]["token"]
+    owner = st.secrets["github"]["owner"]
+    repo = st.secrets["github"]["repo"]
+    file_path = st.secrets["github"]["file_path"]
 
-def read_mapping_file(mapping_file_path):
-    if not os.path.exists(mapping_file_path):
-        raise FileNotFoundError(f"Error: '{mapping_file_path}' not found.")
-    try:
-        mapping_df = pd.read_excel(mapping_file_path)
-    except Exception as e:
-        raise Exception(f"Error reading '{mapping_file_path}': {e}")
-    required_columns = {'Base Unit Symbol', 'Multiplier Symbol'}
-    if not required_columns.issubset(mapping_df.columns):
-        raise ValueError(f"'{mapping_file_path}' must contain the columns: {required_columns}")
-    base_units = {str(unit).strip() for unit in mapping_df['Base Unit Symbol'].dropna().unique()}
-    multipliers_df = mapping_df[mapping_df['Multiplier Symbol'].notna()]
-    defined_multipliers = set(multipliers_df['Multiplier Symbol'])
-    undefined_multipliers = defined_multipliers - set(MULTIPLIER_MAPPING.keys())
-    if undefined_multipliers:
-        raise ValueError(f"Undefined multipliers found in '{mapping_file_path}': {undefined_multipliers}")
-    return mapping_df, base_units, MULTIPLIER_MAPPING
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        content_json = response.json()
+        encoded_content = content_json["content"]
+        # decode the base64 content
+        decoded = base64.b64decode(encoded_content)
+        local_file = "mapping.xlsx"
+        with open(local_file, "wb") as f:
+            f.write(decoded)
+        return local_file
+    else:
+        st.error(f"Failed to download file from GitHub: {response.status_code} {response.text}")
+        st.stop()
+
+def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
+    """
+    Updates 'mapping.xlsx' on GitHub using a PUT request to the GitHub API.
+    """
+    github_token = st.secrets["github"]["token"]
+    owner = st.secrets["github"]["owner"]
+    repo = st.secrets["github"]["repo"]
+    file_path = st.secrets["github"]["file_path"]
+
+    # 1) Save to local file
+    temp_file = "mapping.xlsx"
+    mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
+
+    # 2) Encode local file in base64
+    with open(temp_file, "rb") as f:
+        content_bytes = f.read()
+    encoded_content = base64.b64encode(content_bytes).decode("utf-8")
+
+    # 3) Get current file's SHA (if it exists)
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    current_response = requests.get(url, headers=headers)
+    sha = None
+    if current_response.status_code == 200:
+        sha = current_response.json().get("sha")
+
+    # 4) Prepare data payload for PUT
+    data = {
+        "message": "Update mapping file via Streamlit app",
+        "content": encoded_content
+    }
+    if sha:
+        data["sha"] = sha
+
+    # 5) Make the PUT request
+    update_response = requests.put(url, headers=headers, json=data)
+    os.remove(temp_file)  # clean up local file
+
+    if update_response.status_code in [200, 201]:
+        return True
+    else:
+        st.error(f"Failed to update file on GitHub: {update_response.status_code} {update_response.text}")
+        return False
+
+# ------------------ Parsing & Processing Functions ------------------ #
 
 def split_outside_parens(text, delimiters):
     tokens = []
@@ -181,115 +220,46 @@ def process_unit_token(token, base_units, multipliers_dict):
 
 def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     tokens = split_outside_parens(normalized_unit, delimiters=["to", ",", "@"])
-    resolved = []
+    resolved_parts = []
     for part in tokens:
         if part in ["to", ",", "@"]:
-            resolved.append(part)
-        elif part:
-            resolved.append(process_unit_token(part, base_units, multipliers_dict))
-    return "".join(resolved)
+            resolved_parts.append(part)
+        else:
+            if part == "":
+                continue
+            resolved_parts.append(process_unit_token(part, base_units, multipliers_dict))
+    return "".join(resolved_parts)
 
-def save_mapping_to_drive(mapping_df):
-    # Save updated mapping to a temporary file.
-    temp_file = "temp_mapping.xlsx"
-    mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
-    
-    # Initialize GoogleAuth without a local settings file.
-    gauth = GoogleAuth(settings_file=None)
-    
-    # Load raw client config from st.secrets.
-    try:
-        raw_config = st.secrets["google"]["client_secrets"]
-        st.write("DEBUG: Raw client_config from secrets:", raw_config)
-    except Exception as e:
-        st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
-        raise
+# ------------------ Streamlit App ------------------ #
+st.title("Unit Processing App (GitHub-based)")
 
-    # Try to parse the raw JSON.
-    try:
-        client_config_full = json.loads(raw_config)
-        st.write("DEBUG: Successfully parsed raw JSON.")
-    except Exception as e:
-        st.write("DEBUG: Raw JSON failed to parse, attempting fix. Error:", e)
-        fixed = fix_json_string(raw_config)
-        st.write("DEBUG: Fixed JSON string:", fixed)
-        client_config_full = json.loads(fixed)
+# 1) Download the mapping file from GitHub
+mapping_local_path = download_mapping_file_from_github()
+if not os.path.exists(mapping_local_path):
+    st.stop()  # error was already shown if we can't download
 
-    # Check if the JSON contains a "web" key.
-    if "web" in client_config_full:
-        client_config = client_config_full["web"]
-        st.write("DEBUG: Using client_config['web']:", json.dumps(client_config, indent=2))
-    elif "installed" in client_config_full:
-        client_config = client_config_full["installed"]
-        st.write("DEBUG: Using client_config['installed']:", json.dumps(client_config, indent=2))
-    else:
-        client_config = client_config_full
-        st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
-    
-    # Do not remove any keys.
-    # WORKAROUND: If "redirect_uris" exists, add a new key "redirect_uri" (without deleting "redirect_uris").
-    if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
-        st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
-        client_config["redirect_uri"] = client_config["redirect_uris"][0]
-    
-    # Set the OAuth scope explicitly.
-    gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
-    st.write("DEBUG: Set oauth_scope to:", gauth.settings["oauth_scope"])
-    
-    # Set the client configuration for PyDrive2.
-    gauth.settings["client_config_backend"] = "settings"
-    gauth.settings["client_config"] = client_config
-    
-    # Debug: Check for required keys.
-    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uri"]
-    missing = [k for k in required_keys if k not in gauth.settings["client_config"]]
-    if missing:
-        st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
-        raise Exception("Insufficient client config: missing " + ", ".join(missing))
-    
-    # Use st.query_params (the new API) to obtain the code.
-    params = st.query_params
-    if "code" in params:
-        code = params["code"][0]
-        st.write("DEBUG: Found authorization code in query parameters:", code)
-        try:
-            gauth.Auth(code)
-            gauth.SaveCredentialsFile("mycreds.txt")
-            st.write("DEBUG: Authentication successful. Credentials saved.")
-        except Exception as auth_error:
-            st.error(f"DEBUG: Authentication failed: {auth_error}")
-            st.stop()
-    else:
-        auth_url = gauth.GetAuthUrl()
-        st.write("### Google Drive Authorization Required")
-        st.markdown(f"[Authorize Here]({auth_url})")
-        st.write("After approval, reload the app with the code in the URL query parameters.")
-        st.stop()
-    
-    drive = GoogleDrive(gauth)
-    st.write("DEBUG: Uploading temporary file:", temp_file)
-    file = drive.CreateFile({'id': MAPPING_FILE_ID})
-    file.SetContentFile(temp_file)
-    file.Upload()
-    st.write("DEBUG: File uploaded to Google Drive.")
-    os.remove(temp_file)
-    return True
-
-# ------------------ Streamlit App UI ------------------ #
-st.title("Unit Processing App")
-
-operation = st.selectbox("Select Operation", options=["Get Pattern", "Add Unit"])
-
+# 2) Parse the local mapping file
 try:
-    mapping_filepath = download_mapping_file()
-    mapping_df, base_units, multipliers_dict = read_mapping_file(mapping_filepath)
+    mapping_df = pd.read_excel(mapping_local_path)
 except Exception as e:
-    st.error(f"Failed to load mapping file: {e}")
+    st.error(f"Failed to read downloaded mapping file: {e}")
     st.stop()
+
+# Validate columns
+required_cols = {"Base Unit Symbol", "Multiplier Symbol"}
+if not required_cols.issubset(mapping_df.columns):
+    st.error(f"Mapping file must contain columns: {required_cols}")
+    st.stop()
+
+# Build sets for reference
+base_units = {str(u).strip() for u in mapping_df["Base Unit Symbol"].dropna().unique()}
+
+# The main UI
+operation = st.selectbox("Select Operation", ["Get Pattern", "Add Unit"])
 
 if operation == "Get Pattern":
     st.header("Get Pattern")
-    st.write("This mode processes an input Excel file using the mapping file (loaded from Google Drive).")
+    st.write("This mode processes an input Excel file using the mapping file (loaded from GitHub).")
     input_file = st.file_uploader("Upload Input Excel File", type=["xlsx"])
     if input_file:
         try:
@@ -300,8 +270,9 @@ if operation == "Get Pattern":
             if "Normalized Unit" not in input_df.columns:
                 st.error("Input file must contain a 'Normalized Unit' column.")
             else:
+                # Resolve units
                 input_df["Absolute Unit"] = input_df["Normalized Unit"].apply(
-                    lambda x: resolve_compound_unit(str(x), base_units, multipliers_dict)
+                    lambda x: resolve_compound_unit(str(x), base_units, MULTIPLIER_MAPPING)
                 )
                 st.success("Processing completed!")
                 towrite = BytesIO()
@@ -316,23 +287,24 @@ if operation == "Get Pattern":
 
 elif operation == "Add Unit":
     st.header("Add Unit")
-    st.write("This mode lets you add a new unit to the mapping file. Only the unit symbol is required.")
+    st.write("This mode lets you add a new unit to the mapping file (on GitHub). Only the unit symbol is required.")
     st.subheader("Current Mapping File")
     st.dataframe(mapping_df)
-    
-    with st.form(key="add_unit_form"):
+
+    with st.form("add_unit_form"):
         new_unit = st.text_input("Enter new Base Unit Symbol")
         submit_new = st.form_submit_button("Add New Unit")
-    
+
     if submit_new:
-        if new_unit:
+        if new_unit.strip():
             new_row = {"Base Unit Symbol": new_unit.strip(), "Multiplier Symbol": None}
             mapping_df = pd.concat([mapping_df, pd.DataFrame([new_row])], ignore_index=True)
-            st.success("New unit added!")
+            st.success(f"New unit '{new_unit.strip()}' added!")
             st.dataframe(mapping_df)
         else:
-            st.error("The unit field is required.")
-    
+            st.error("Unit field is required.")
+
+    # Option to download updated file locally
     if st.button("Download Updated Mapping File"):
         towrite = BytesIO()
         mapping_df.to_excel(towrite, index=False, engine='openpyxl')
@@ -343,10 +315,10 @@ elif operation == "Add Unit":
             file_name="mapping.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    
-    if st.button("Save Changes to Google Drive"):
-        try:
-            if save_mapping_to_drive(mapping_df):
-                st.success("Mapping file updated on Google Drive!")
-        except Exception as e:
-            st.error(f"Failed to update Google Drive: {e}")
+
+    # Save changes back to GitHub
+    if st.button("Save Changes to GitHub"):
+        if update_mapping_file_on_github(mapping_df):
+            st.success("Mapping file updated on GitHub!")
+        else:
+            st.error("Failed to update mapping file on GitHub.")
