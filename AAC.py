@@ -36,7 +36,7 @@ MULTIPLIER_MAPPING = {
 def fix_json_string(s):
     """
     Repeatedly insert a comma between adjacent key-value pairs if missing.
-    (Workaround only if raw JSON fails to parse.)
+    (This is a workaround only if raw JSON fails to parse.)
     """
     pattern = re.compile(r'(":[^,}]+)(\s*")')
     prev = None
@@ -190,7 +190,7 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved)
 
 def save_mapping_to_drive(mapping_df):
-    # Save updated mapping to a temporary file.
+    # Save the updated mapping DataFrame to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
@@ -205,7 +205,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # Try to parse the raw JSON.
+    # First, try to parse the raw JSON.
     try:
         client_config_full = json.loads(raw_config)
         st.write("DEBUG: Successfully parsed raw JSON.")
@@ -223,27 +223,17 @@ def save_mapping_to_drive(mapping_df):
         client_config = client_config_full
         st.write("DEBUG: Using full client_config:", json.dumps(client_config, indent=2))
     
-    # Remove extra keys that PyDrive2 might not expect.
+    # Remove extra keys that PyDrive2 might not expect (e.g., "project_id").
     if "project_id" in client_config:
         st.write("DEBUG: Removing extra key 'project_id' from client config.")
         del client_config["project_id"]
-    
-    # Replace "redirect_uris" with a single "redirect_uri".
-    if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
-        st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
-        client_config["redirect_uri"] = client_config["redirect_uris"][0]  # Use your Streamlit app URL here!
-        del client_config["redirect_uris"]
-    
-    # Set the OAuth scope explicitly.
-    gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
-    st.write("DEBUG: Set oauth_scope to:", gauth.settings["oauth_scope"])
     
     # Set the client configuration for PyDrive2.
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
     # Debug: Check for required keys.
-    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uri"]
+    required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
     missing = [k for k in required_keys if k not in gauth.settings["client_config"]]
     if missing:
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
