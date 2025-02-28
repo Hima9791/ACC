@@ -36,7 +36,6 @@ MULTIPLIER_MAPPING = {
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
-    # Export the Google Sheet as an Excel file using its export endpoint.
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
     output_path = "mapping.xlsx"
     if not os.path.exists(output_path):
@@ -55,7 +54,6 @@ def read_mapping_file(mapping_file_path):
     if not required_columns.issubset(mapping_df.columns):
         raise ValueError(f"'{mapping_file_path}' must contain the columns: {required_columns}")
     base_units = {str(unit).strip() for unit in mapping_df['Base Unit Symbol'].dropna().unique()}
-    # Validate multipliers on rows where they exist.
     multipliers_df = mapping_df[mapping_df['Multiplier Symbol'].notna()]
     defined_multipliers = set(multipliers_df['Multiplier Symbol'])
     undefined_multipliers = defined_multipliers - set(MULTIPLIER_MAPPING.keys())
@@ -197,16 +195,17 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Force PyDrive2 to use the credentials from st.secrets.
+    # Load the client configuration from st.secrets and extract the "installed" part.
     client_config = json.loads(st.secrets["google"]["client_secrets"])
     gauth.settings["client_config_backend"] = "settings"
-    gauth.settings["client_config"] = client_config
+    # Use the sub-dictionary under "installed"
+    gauth.settings["client_config"] = client_config["installed"]
 
     # Load saved credentials if available; otherwise, perform local webserver auth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
     if gauth.credentials is None:
-        gauth.LocalWebserverAuth()  # This will open a local browser window for authentication.
+        gauth.LocalWebserverAuth()  # Opens a local browser window for authentication.
     elif gauth.access_token_expired:
         gauth.Refresh()
     else:
@@ -214,7 +213,6 @@ def save_mapping_to_drive(mapping_df):
     gauth.SaveCredentialsFile("mycreds.txt")
     
     drive = GoogleDrive(gauth)
-    # Update the file on Google Drive using its file ID.
     file = drive.CreateFile({'id': MAPPING_FILE_ID})
     file.SetContentFile(temp_file)
     file.Upload()
@@ -224,10 +222,8 @@ def save_mapping_to_drive(mapping_df):
 # ------------------ Streamlit App UI ------------------ #
 st.title("Unit Processing App")
 
-# Let the user choose between two operations.
 operation = st.selectbox("Select Operation", options=["Get Pattern", "Add Unit"])
 
-# Download and read the mapping file from Google Sheets.
 try:
     mapping_filepath = download_mapping_file()
     mapping_df, base_units, multipliers_dict = read_mapping_file(mapping_filepath)
@@ -238,8 +234,6 @@ except Exception as e:
 if operation == "Get Pattern":
     st.header("Get Pattern")
     st.write("This mode processes an input Excel file using the mapping file (loaded from Google Drive).")
-    
-    # Upload an Input Excel File.
     input_file = st.file_uploader("Upload Input Excel File", type=["xlsx"])
     if input_file:
         try:
@@ -267,19 +261,15 @@ if operation == "Get Pattern":
 elif operation == "Add Unit":
     st.header("Add Unit")
     st.write("This mode lets you add a new unit to the mapping file. Only the unit symbol is required.")
-    
-    # Display the current mapping.
     st.subheader("Current Mapping File")
     st.dataframe(mapping_df)
     
-    # Form to add a new unit.
     with st.form(key="add_unit_form"):
         new_unit = st.text_input("Enter new Base Unit Symbol")
         submit_new = st.form_submit_button("Add New Unit")
     
     if submit_new:
         if new_unit:
-            # Append new row using pd.concat.
             new_row = {"Base Unit Symbol": new_unit.strip(), "Multiplier Symbol": None}
             mapping_df = pd.concat([mapping_df, pd.DataFrame([new_row])], ignore_index=True)
             st.success("New unit added!")
@@ -287,7 +277,6 @@ elif operation == "Add Unit":
         else:
             st.error("The unit field is required.")
     
-    # Button to download the updated mapping file locally.
     if st.button("Download Updated Mapping File"):
         towrite = BytesIO()
         mapping_df.to_excel(towrite, index=False, engine='openpyxl')
@@ -299,7 +288,6 @@ elif operation == "Add Unit":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     
-    # Button to save changes permanently to Google Drive.
     if st.button("Save Changes to Google Drive"):
         try:
             if save_mapping_to_drive(mapping_df):
