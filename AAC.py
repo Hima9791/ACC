@@ -131,7 +131,7 @@ def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
         return False
 
 ############################
-#  UNIT-PROCESSING LOGIC   #
+#   UNIT-PROCESSING LOGIC  #
 ############################
 
 def split_outside_parens(text, delimiters):
@@ -274,7 +274,7 @@ if not required_cols.issubset(mapping_df.columns):
 
 base_units = {str(u).strip() for u in mapping_df["Base Unit Symbol"].dropna().unique()}
 
-operation = st.selectbox("Select Operation", ["Get Pattern", "Add Unit"])
+operation = st.selectbox("Select Operation", ["Get Pattern", "Manage Units"])
 
 if operation == "Get Pattern":
     st.header("Get Pattern")
@@ -303,12 +303,14 @@ if operation == "Get Pattern":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-elif operation == "Add Unit":
-    st.header("Add Unit")
-    st.write("This mode lets you add a new unit to the mapping file on GitHub. Only the unit symbol is required.")
-    st.subheader("Current Mapping File")
-    st.dataframe(mapping_df)
+elif operation == "Manage Units":
+    st.header("Manage Units")
+    st.write("This mode lets you add or remove units from the mapping file. Only the unit symbol is required for adding.")
 
+    st.subheader("Current Mapping File")
+    st.dataframe(st.session_state["mapping_df"])
+
+    # --- Add a new unit ---
     with st.form("add_unit_form"):
         new_unit = st.text_input("Enter new Base Unit Symbol")
         submit_new = st.form_submit_button("Add New Unit")
@@ -316,11 +318,32 @@ elif operation == "Add Unit":
     if submit_new:
         if new_unit.strip():
             new_row = {"Base Unit Symbol": new_unit.strip(), "Multiplier Symbol": None}
-            st.session_state["mapping_df"] = pd.concat([st.session_state["mapping_df"], pd.DataFrame([new_row])], ignore_index=True)
+            st.session_state["mapping_df"] = pd.concat(
+                [st.session_state["mapping_df"], pd.DataFrame([new_row])],
+                ignore_index=True
+            )
             st.success(f"New unit '{new_unit.strip()}' added!")
             st.dataframe(st.session_state["mapping_df"])
         else:
             st.error("The unit field is required.")
+
+    # --- Delete a unit ---
+    existing_units = st.session_state["mapping_df"]["Base Unit Symbol"].dropna().unique().tolist()
+    if existing_units:
+        to_delete = st.selectbox("Select a unit to delete", ["--Select--"] + existing_units)
+        if st.button("Delete Selected Unit"):
+            if to_delete == "--Select--":
+                st.warning("Please select a valid unit to delete.")
+            else:
+                before_shape = st.session_state["mapping_df"].shape
+                st.session_state["mapping_df"] = st.session_state["mapping_df"][
+                    st.session_state["mapping_df"]["Base Unit Symbol"] != to_delete
+                ]
+                after_shape = st.session_state["mapping_df"].shape
+                st.success(f"Unit '{to_delete}' has been deleted. (Rows before: {before_shape}, after: {after_shape})")
+                st.dataframe(st.session_state["mapping_df"])
+    else:
+        st.info("No units available to delete.")
 
     # Option to download updated file locally
     if st.button("Download Updated Mapping File"):
