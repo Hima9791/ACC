@@ -7,7 +7,10 @@ import base64
 import requests
 from io import BytesIO
 
-# ------------------ Global dictionary for recognized multipliers ------------------ #
+############################
+#  MULTIPLIER DICTIONARY   #
+############################
+
 MULTIPLIER_MAPPING = {
     'k': 1e3,
     'M': 1e6,
@@ -29,13 +32,16 @@ MULTIPLIER_MAPPING = {
     'y': 1e-24
 }
 
-# ------------------ GitHub Helper Functions ------------------ #
+############################
+#  GITHUB HELPER FUNCTIONS #
+############################
 
-def download_mapping_file_from_github() -> str:
+def download_mapping_file_from_github() -> pd.DataFrame:
     """
     Downloads 'mapping.xlsx' from a GitHub repo specified in secrets,
-    saves it locally, and returns the local file path.
+    returns a DataFrame parsed from that file.
     """
+    st.write("DEBUG: Downloading mapping.xlsx from GitHub...")
     github_token = st.secrets["github"]["token"]
     owner = st.secrets["github"]["owner"]
     repo = st.secrets["github"]["repo"]
@@ -51,12 +57,21 @@ def download_mapping_file_from_github() -> str:
     if response.status_code == 200:
         content_json = response.json()
         encoded_content = content_json["content"]
-        # decode the base64 content
-        decoded = base64.b64decode(encoded_content)
+        decoded_bytes = base64.b64decode(encoded_content)
+
         local_file = "mapping.xlsx"
         with open(local_file, "wb") as f:
-            f.write(decoded)
-        return local_file
+            f.write(decoded_bytes)
+
+        # Now parse the local file into a DataFrame
+        try:
+            df = pd.read_excel(local_file)
+        except Exception as e:
+            st.error(f"Failed to parse downloaded mapping file: {e}")
+            st.stop()
+        os.remove(local_file)  # clean up local file
+        st.write("DEBUG: Download successful. mapping_df shape:", df.shape)
+        return df
     else:
         st.error(f"Failed to download file from GitHub: {response.status_code} {response.text}")
         st.stop()
@@ -65,12 +80,15 @@ def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
     """
     Updates 'mapping.xlsx' on GitHub using a PUT request to the GitHub API.
     """
+    st.write("DEBUG: Attempting to update mapping.xlsx on GitHub.")
+    st.write("DEBUG: DataFrame shape before upload:", mapping_df.shape)
+
     github_token = st.secrets["github"]["token"]
     owner = st.secrets["github"]["owner"]
     repo = st.secrets["github"]["repo"]
     file_path = st.secrets["github"]["file_path"]
 
-    # 1) Save to local file
+    # 1) Save DF to local file
     temp_file = "mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
 
@@ -79,7 +97,7 @@ def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
         content_bytes = f.read()
     encoded_content = base64.b64encode(content_bytes).decode("utf-8")
 
-    # 3) Get current file's SHA (if it exists)
+    # 3) Get the current file's SHA
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
     headers = {
         "Authorization": f"token {github_token}",
@@ -89,8 +107,11 @@ def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
     sha = None
     if current_response.status_code == 200:
         sha = current_response.json().get("sha")
+        st.write("DEBUG: Current file SHA:", sha)
+    else:
+        st.write("DEBUG: No existing file found. Creating a new one...")
 
-    # 4) Prepare data payload for PUT
+    # 4) Prepare data payload
     data = {
         "message": "Update mapping file via Streamlit app",
         "content": encoded_content
@@ -98,17 +119,20 @@ def update_mapping_file_on_github(mapping_df: pd.DataFrame) -> bool:
     if sha:
         data["sha"] = sha
 
-    # 5) Make the PUT request
+    # 5) PUT request to update file
     update_response = requests.put(url, headers=headers, json=data)
     os.remove(temp_file)  # clean up local file
 
     if update_response.status_code in [200, 201]:
+        st.write("DEBUG: Update/creation successful:", update_response.status_code)
         return True
     else:
         st.error(f"Failed to update file on GitHub: {update_response.status_code} {update_response.text}")
         return False
 
-# ------------------ Parsing & Processing Functions ------------------ #
+############################
+#  UNIT-PROCESSING LOGIC   #
+############################
 
 def split_outside_parens(text, delimiters):
     tokens = []
@@ -230,31 +254,26 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
             resolved_parts.append(process_unit_token(part, base_units, multipliers_dict))
     return "".join(resolved_parts)
 
-# ------------------ Streamlit App ------------------ #
+############################
+#   MAIN STREAMLIT APP     #
+############################
+
 st.title("Unit Processing App (GitHub-based)")
 
-# 1) Download the mapping file from GitHub
-mapping_local_path = download_mapping_file_from_github()
-if not os.path.exists(mapping_local_path):
-    st.stop()  # error was already shown if we can't download
+# Use session_state to store the DataFrame so we don't re-download after each interaction.
+if "mapping_df" not in st.session_state:
+    st.session_state["mapping_df"] = download_mapping_file_from_github()
 
-# 2) Parse the local mapping file
-try:
-    mapping_df = pd.read_excel(mapping_local_path)
-except Exception as e:
-    st.error(f"Failed to read downloaded mapping file: {e}")
-    st.stop()
+mapping_df = st.session_state["mapping_df"]
 
-# Validate columns
+# Validate columns quickly
 required_cols = {"Base Unit Symbol", "Multiplier Symbol"}
 if not required_cols.issubset(mapping_df.columns):
     st.error(f"Mapping file must contain columns: {required_cols}")
     st.stop()
 
-# Build sets for reference
 base_units = {str(u).strip() for u in mapping_df["Base Unit Symbol"].dropna().unique()}
 
-# The main UI
 operation = st.selectbox("Select Operation", ["Get Pattern", "Add Unit"])
 
 if operation == "Get Pattern":
@@ -270,7 +289,6 @@ if operation == "Get Pattern":
             if "Normalized Unit" not in input_df.columns:
                 st.error("Input file must contain a 'Normalized Unit' column.")
             else:
-                # Resolve units
                 input_df["Absolute Unit"] = input_df["Normalized Unit"].apply(
                     lambda x: resolve_compound_unit(str(x), base_units, MULTIPLIER_MAPPING)
                 )
@@ -287,7 +305,7 @@ if operation == "Get Pattern":
 
 elif operation == "Add Unit":
     st.header("Add Unit")
-    st.write("This mode lets you add a new unit to the mapping file (on GitHub). Only the unit symbol is required.")
+    st.write("This mode lets you add a new unit to the mapping file on GitHub. Only the unit symbol is required.")
     st.subheader("Current Mapping File")
     st.dataframe(mapping_df)
 
@@ -298,16 +316,16 @@ elif operation == "Add Unit":
     if submit_new:
         if new_unit.strip():
             new_row = {"Base Unit Symbol": new_unit.strip(), "Multiplier Symbol": None}
-            mapping_df = pd.concat([mapping_df, pd.DataFrame([new_row])], ignore_index=True)
+            st.session_state["mapping_df"] = pd.concat([st.session_state["mapping_df"], pd.DataFrame([new_row])], ignore_index=True)
             st.success(f"New unit '{new_unit.strip()}' added!")
-            st.dataframe(mapping_df)
+            st.dataframe(st.session_state["mapping_df"])
         else:
-            st.error("Unit field is required.")
+            st.error("The unit field is required.")
 
     # Option to download updated file locally
     if st.button("Download Updated Mapping File"):
         towrite = BytesIO()
-        mapping_df.to_excel(towrite, index=False, engine='openpyxl')
+        st.session_state["mapping_df"].to_excel(towrite, index=False, engine='openpyxl')
         towrite.seek(0)
         st.download_button(
             label="Download mapping.xlsx",
@@ -318,7 +336,8 @@ elif operation == "Add Unit":
 
     # Save changes back to GitHub
     if st.button("Save Changes to GitHub"):
-        if update_mapping_file_on_github(mapping_df):
+        st.write("DEBUG: Attempting to save changes to GitHub. DF shape:", st.session_state["mapping_df"].shape)
+        if update_mapping_file_on_github(st.session_state["mapping_df"]):
             st.success("Mapping file updated on GitHub!")
         else:
             st.error("Failed to update mapping file on GitHub.")
