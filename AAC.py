@@ -8,7 +8,7 @@ from io import BytesIO
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
-# ------------------ Global Constants & Variables ------------------ #
+# ------------------ Global Constants ------------------ #
 # Your Google Sheets file ID (mapping file)
 MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
 
@@ -55,7 +55,7 @@ def read_mapping_file(mapping_file_path):
     if not required_columns.issubset(mapping_df.columns):
         raise ValueError(f"'{mapping_file_path}' must contain the columns: {required_columns}")
     base_units = {str(unit).strip() for unit in mapping_df['Base Unit Symbol'].dropna().unique()}
-    # Only consider rows where the multiplier is not null for validation.
+    # Validate multipliers on rows where they exist.
     multipliers_df = mapping_df[mapping_df['Multiplier Symbol'].notna()]
     defined_multipliers = set(multipliers_df['Multiplier Symbol'])
     undefined_multipliers = defined_multipliers - set(MULTIPLIER_MAPPING.keys())
@@ -197,15 +197,16 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load client configuration from st.secrets.
+    # Force PyDrive2 to use the credentials from st.secrets.
     client_config = json.loads(st.secrets["google"]["client_secrets"])
-    gauth.settings['client_config'] = client_config
+    gauth.settings["client_config_backend"] = "settings"
+    gauth.settings["client_config"] = client_config
 
     # Load saved credentials if available; otherwise, perform local webserver auth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
     if gauth.credentials is None:
-        gauth.LocalWebserverAuth()
+        gauth.LocalWebserverAuth()  # This will open a local browser window for authentication.
     elif gauth.access_token_expired:
         gauth.Refresh()
     else:
