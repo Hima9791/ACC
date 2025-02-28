@@ -33,7 +33,6 @@ MULTIPLIER_MAPPING = {
     'z': 1e-21,  # zepto
     'y': 1e-24   # yocto
 }
-st.write(st.secrets)
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
@@ -191,21 +190,22 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved_parts)
 
 def save_mapping_to_drive(mapping_df):
-    # Save updated mapping to a temporary file.
+    # Save the updated mapping DataFrame to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
-    # Set up GoogleAuth using credentials from st.secrets.
-    gauth = GoogleAuth()
-    # Load client configuration from the secrets file.
+    # Initialize GoogleAuth without a local settings file.
+    gauth = GoogleAuth(settings_file=None)
+    
+    # Load client configuration from st.secrets.
     client_config = json.loads(st.secrets["google"]["client_secrets"])
     gauth.settings['client_config'] = client_config
 
-    # Load saved credentials if available, or perform authentication.
+    # Load saved credentials if available; otherwise, perform local webserver auth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
     if gauth.credentials is None:
-        gauth.LocalWebserverAuth()  # Opens a local browser for authentication.
+        gauth.LocalWebserverAuth()
     elif gauth.access_token_expired:
         gauth.Refresh()
     else:
@@ -213,11 +213,11 @@ def save_mapping_to_drive(mapping_df):
     gauth.SaveCredentialsFile("mycreds.txt")
     
     drive = GoogleDrive(gauth)
-    # Update the file on Drive using its file ID.
+    # Update the file on Google Drive using its file ID.
     file = drive.CreateFile({'id': MAPPING_FILE_ID})
     file.SetContentFile(temp_file)
     file.Upload()
-    os.remove(temp_file)  # Remove the temporary file.
+    os.remove(temp_file)
     return True
 
 # ------------------ Streamlit App UI ------------------ #
