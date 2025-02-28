@@ -190,7 +190,7 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved)
 
 def save_mapping_to_drive(mapping_df):
-    # Save the updated mapping DataFrame to a temporary file.
+    # Save updated mapping to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
@@ -205,7 +205,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
         raise
 
-    # First, try to parse the raw JSON.
+    # Try to parse the raw JSON.
     try:
         client_config_full = json.loads(raw_config)
         st.write("DEBUG: Successfully parsed raw JSON.")
@@ -232,6 +232,10 @@ def save_mapping_to_drive(mapping_df):
     gauth.settings["client_config_backend"] = "settings"
     gauth.settings["client_config"] = client_config
     
+    # **NEW:** Set the OAuth scope explicitly.
+    gauth.settings["oauth_scope"] = ['https://www.googleapis.com/auth/drive']
+    st.write("DEBUG: Set oauth_scope to:", gauth.settings["oauth_scope"])
+    
     # Debug: Check for required keys.
     required_keys = ["client_id", "client_secret", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
     missing = [k for k in required_keys if k not in gauth.settings["client_config"]]
@@ -239,7 +243,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
