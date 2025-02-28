@@ -5,7 +5,12 @@ import os
 import gdown
 from io import BytesIO
 
-# ------------------ Global Variables ------------------ #
+# For updating file on Drive
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+
+# ------------------ Global Constants & Variables ------------------ #
+MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"  # your Google Sheets file ID
 MULTIPLIER_MAPPING = {
     'k': 1e3,    # kilo
     'M': 1e6,    # mega
@@ -29,9 +34,7 @@ MULTIPLIER_MAPPING = {
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
-    # Use your Google Sheets file ID from your link
-    MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
-    # Export the Google Sheet as an Excel file
+    # Export the Google Sheet as an Excel file using the export endpoint
     mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
     output_path = "mapping.xlsx"
     if not os.path.exists(output_path):
@@ -50,7 +53,7 @@ def read_mapping_file(mapping_file_path):
     if not required_columns.issubset(mapping_df.columns):
         raise ValueError(f"'{mapping_file_path}' must contain the columns: {required_columns}")
     base_units = {str(unit).strip() for unit in mapping_df['Base Unit Symbol'].dropna().unique()}
-    # Only consider rows with a valid multiplier (non-null)
+    # Check for undefined multipliers (skip rows where multiplier is null)
     multipliers_df = mapping_df[mapping_df['Multiplier Symbol'].notna()]
     defined_multipliers = set(multipliers_df['Multiplier Symbol'])
     undefined_multipliers = defined_multipliers - set(MULTIPLIER_MAPPING.keys())
@@ -184,6 +187,32 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
             resolved_parts.append(process_unit_token(part, base_units, multipliers_dict))
     return "".join(resolved_parts)
 
+def save_mapping_to_drive(mapping_df):
+    # Save updated DataFrame to a temporary file
+    temp_file = "temp_mapping.xlsx"
+    mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
+    
+    # Authenticate and create a Google Drive client using PyDrive2
+    gauth = GoogleAuth()
+    # Attempt to load saved credentials, otherwise perform local webserver auth
+    if os.path.exists("mycreds.txt"):
+        gauth.LoadCredentialsFile("mycreds.txt")
+    if gauth.credentials is None:
+        gauth.LocalWebserverAuth()
+    elif gauth.access_token_expired:
+        gauth.Refresh()
+    else:
+        gauth.Authorize()
+    gauth.SaveCredentialsFile("mycreds.txt")
+    
+    drive = GoogleDrive(gauth)
+    # Update the file on Drive using the file ID
+    file = drive.CreateFile({'id': MAPPING_FILE_ID})
+    file.SetContentFile(temp_file)
+    file.Upload()
+    os.remove(temp_file)  # Clean up the temporary file
+    return True
+
 # ------------------ Streamlit App UI ------------------ #
 st.title("Unit Processing App")
 
@@ -235,7 +264,7 @@ elif operation == "Add Unit":
     st.subheader("Current Mapping File")
     st.dataframe(mapping_df)
     
-    # Form to add a new unit (multiplier is not required)
+    # Form to add a new unit (no multiplier required)
     with st.form(key="add_unit_form"):
         new_unit = st.text_input("Enter new Base Unit Symbol")
         submit_new = st.form_submit_button("Add New Unit")
@@ -250,7 +279,7 @@ elif operation == "Add Unit":
         else:
             st.error("The unit field is required.")
     
-    # Provide a download button for the updated mapping file
+    # Button to download updated mapping file locally
     if st.button("Download Updated Mapping File"):
         towrite = BytesIO()
         mapping_df.to_excel(towrite, index=False, engine='openpyxl')
@@ -261,3 +290,11 @@ elif operation == "Add Unit":
             file_name="mapping.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+    
+    # Button to save changes to Google Drive
+    if st.button("Save Changes to Google Drive"):
+        try:
+            if save_mapping_to_drive(mapping_df):
+                st.success("Mapping file updated on Google Drive!")
+        except Exception as e:
+            st.error(f"Failed to update Google Drive: {e}")
