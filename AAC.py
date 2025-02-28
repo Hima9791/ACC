@@ -9,29 +9,27 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
 # ------------------ Global Constants ------------------ #
-# Your Google Sheets file ID (mapping file)
 MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
 
-# Global dictionary for recognized multipliers.
 MULTIPLIER_MAPPING = {
-    'k': 1e3,    # kilo
-    'M': 1e6,    # mega
-    'G': 1e9,    # giga
-    'T': 1e12,   # tera
-    'P': 1e15,   # peta
-    'E': 1e18,   # exa
-    'Z': 1e21,   # zetta
-    'Y': 1e24,   # yotta
-    'd': 1e-1,   # deci
-    'c': 1e-2,   # centi
-    'm': 1e-3,   # milli
-    'µ': 1e-6,   # micro
-    'n': 1e-9,   # nano
-    'p': 1e-12,  # pico
-    'f': 1e-15,  # femto
-    'a': 1e-18,  # atto
-    'z': 1e-21,  # zepto
-    'y': 1e-24   # yocto
+    'k': 1e3,
+    'M': 1e6,
+    'G': 1e9,
+    'T': 1e12,
+    'P': 1e15,
+    'E': 1e18,
+    'Z': 1e21,
+    'Y': 1e24,
+    'd': 1e-1,
+    'c': 1e-2,
+    'm': 1e-3,
+    'µ': 1e-6,
+    'n': 1e-9,
+    'p': 1e-12,
+    'f': 1e-15,
+    'a': 1e-18,
+    'z': 1e-21,
+    'y': 1e-24
 }
 
 # ------------------ Helper Functions ------------------ #
@@ -188,34 +186,61 @@ def resolve_compound_unit(normalized_unit, base_units, multipliers_dict):
     return "".join(resolved_parts)
 
 def save_mapping_to_drive(mapping_df):
-    # Save the updated mapping DataFrame to a temporary file.
+    # Save updated mapping to a temporary file.
     temp_file = "temp_mapping.xlsx"
     mapping_df.to_excel(temp_file, index=False, engine='openpyxl')
     
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load the client configuration from st.secrets and extract the "installed" part.
-    client_config = json.loads(st.secrets["google"]["client_secrets"])
-    gauth.settings["client_config_backend"] = "settings"
-    # Use the sub-dictionary under "installed"
-    gauth.settings["client_config"] = client_config["installed"]
+    # Load client configuration from st.secrets.
+    try:
+        client_config_full = json.loads(st.secrets["google"]["client_secrets"])
+        st.write("DEBUG: Full client_config from secrets:", client_config_full)
+    except Exception as e:
+        st.error("DEBUG: Error loading client_secrets from st.secrets: " + str(e))
+        raise
 
-    # Load saved credentials if available; otherwise, perform local webserver auth.
+    # Check if the "installed" key exists; if so, use it.
+    if "installed" in client_config_full:
+        client_config = client_config_full["installed"]
+        st.write("DEBUG: Using client_config['installed']:", client_config)
+    else:
+        client_config = client_config_full
+        st.write("DEBUG: Using full client_config:", client_config)
+    
+    # Set client configuration settings for PyDrive2.
+    gauth.settings["client_config_backend"] = "settings"
+    gauth.settings["client_config"] = client_config
+    
+    # Debug: Check for required keys.
+    required_keys = ["client_id", "client_secret", "project_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "redirect_uris"]
+    missing_keys = [key for key in required_keys if key not in gauth.settings["client_config"]]
+    if missing_keys:
+        st.error("DEBUG: Missing keys in client config: " + ", ".join(missing_keys))
+        raise Exception("Insufficient client config in settings: missing " + ", ".join(missing_keys))
+    
+    # Load saved credentials if available; otherwise perform authentication.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
+        st.write("DEBUG: Loaded saved credentials from mycreds.txt")
     if gauth.credentials is None:
-        gauth.LocalWebserverAuth()  # Opens a local browser window for authentication.
+        st.write("DEBUG: No credentials found; performing LocalWebserverAuth")
+        gauth.LocalWebserverAuth()  # Opens a browser window for authentication.
     elif gauth.access_token_expired:
+        st.write("DEBUG: Credentials expired; refreshing")
         gauth.Refresh()
     else:
+        st.write("DEBUG: Credentials valid; authorizing")
         gauth.Authorize()
     gauth.SaveCredentialsFile("mycreds.txt")
     
     drive = GoogleDrive(gauth)
+    st.write("DEBUG: Uploading temporary file:", temp_file)
     file = drive.CreateFile({'id': MAPPING_FILE_ID})
     file.SetContentFile(temp_file)
     file.Upload()
+    st.write("DEBUG: File uploaded to Google Drive.")
     os.remove(temp_file)
     return True
 
