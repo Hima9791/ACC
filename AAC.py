@@ -29,9 +29,10 @@ MULTIPLIER_MAPPING = {
 
 # ------------------ Helper Functions ------------------ #
 def download_mapping_file():
-    # Replace with your actual mapping file ID from Google Drive
-    MAPPING_FILE_ID = "YOUR_MAPPING_FILE_ID"
-    mapping_url = f"https://drive.google.com/uc?export=download&id={MAPPING_FILE_ID}"
+    # Use your Google Sheets file ID extracted from your URL
+    MAPPING_FILE_ID = "1QP1XnxyDEgfxYfgBg_mf2ngXNfm9O8s5"
+    # Use the Google Sheets export endpoint to download as an Excel file
+    mapping_url = f"https://docs.google.com/spreadsheets/d/{MAPPING_FILE_ID}/export?format=xlsx"
     output_path = "mapping.xlsx"
     if not os.path.exists(output_path):
         st.info("Downloading mapping file from Google Drive...")
@@ -188,7 +189,7 @@ st.title("Unit Processing App")
 # Let user choose between two modes
 operation = st.selectbox("Select Operation", options=["Get Pattern", "Add Unit"])
 
-# Download the mapping file from Google Drive (if not already present)
+# Download and read the mapping file from Google Sheets
 try:
     mapping_filepath = download_mapping_file()
     mapping_df, base_units, multipliers_dict = read_mapping_file(mapping_filepath)
