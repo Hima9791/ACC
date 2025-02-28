@@ -36,7 +36,7 @@ MULTIPLIER_MAPPING = {
 def fix_json_string(s):
     """
     Repeatedly insert a comma between adjacent key-value pairs if missing.
-    (This is a workaround only if raw JSON fails to parse.)
+    (Workaround only if raw JSON fails to parse.)
     """
     pattern = re.compile(r'(":[^,}]+)(\s*")')
     prev = None
@@ -197,7 +197,7 @@ def save_mapping_to_drive(mapping_df):
     # Initialize GoogleAuth without a local settings file.
     gauth = GoogleAuth(settings_file=None)
     
-    # Load raw client config from st.secrets.
+    # Load the raw client config string from st.secrets.
     try:
         raw_config = st.secrets["google"]["client_secrets"]
         st.write("DEBUG: Raw client_config from secrets:", raw_config)
@@ -228,10 +228,10 @@ def save_mapping_to_drive(mapping_df):
         st.write("DEBUG: Removing extra key 'project_id' from client config.")
         del client_config["project_id"]
     
-    # WORKAROUND: Replace "redirect_uris" with a single "redirect_uri".
+    # Replace "redirect_uris" with a single "redirect_uri".
     if "redirect_uris" in client_config and isinstance(client_config["redirect_uris"], list) and client_config["redirect_uris"]:
         st.write("DEBUG: Setting 'redirect_uri' to first value in 'redirect_uris'.")
-        client_config["redirect_uri"] = client_config["redirect_uris"][0]
+        client_config["redirect_uri"] = client_config["redirect_uris"][0]  # Use your Streamlit app URL here!
         del client_config["redirect_uris"]
     
     # Set the OAuth scope explicitly.
@@ -249,7 +249,7 @@ def save_mapping_to_drive(mapping_df):
         st.error("DEBUG: Missing keys in client config: " + ", ".join(missing))
         raise Exception("Insufficient client config: missing " + ", ".join(missing))
     
-    # Load saved credentials if available; otherwise perform LocalWebserverAuth.
+    # Load saved credentials if available; otherwise, perform LocalWebserverAuth.
     if os.path.exists("mycreds.txt"):
         gauth.LoadCredentialsFile("mycreds.txt")
         st.write("DEBUG: Loaded saved credentials from mycreds.txt")
